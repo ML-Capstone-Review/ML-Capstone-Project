@@ -1,8 +1,6 @@
 """Streamlit presentation for AirlinePulse."""
-import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-from .analytics import confusion_matrix_figure
 from .prediction import predict_feedback
 from .validation import validate_feedback
 from .schema import CATEGORICAL_COLUMNS, LABELS, NUMERIC_COLUMNS, RATING_COLUMNS
@@ -89,6 +87,7 @@ def render_feedback(data, model, bounds, numeric, categorical):
             try:
                 _internal_result=predict_feedback(model,values,bounds,numeric,categorical)
                 st.session_state["feedback_done"]=True
+                st.session_state["latest_prediction"] = _internal_result
             except Exception as exc:
                 st.error(f"We could not process this form. Please review your entries and try again. ({type(exc).__name__})")
     if st.session_state.get("feedback_done"):
@@ -98,25 +97,27 @@ def render_feedback(data, model, bounds, numeric, categorical):
 
 def render_evaluator(artifacts):
     st.markdown('<div class="hero"><div class="eyebrow">Project evaluator view</div><h1>Model evaluation</h1><p>Held-out results from the classification notebook workflow.</p></div>', unsafe_allow_html=True)
-    st.info("The customer feedback form does not display or use these evaluation details. Metrics below are computed on the notebook’s fixed 20% stratified test split.")
+    st.info("Metrics below are computed on the notebook’s fixed 20% stratified test split.")
+    st.subheader("Passenger prediction")
+    prediction = st.session_state.get("latest_prediction")
+    if prediction is None:
+        st.caption("Submit a passenger's feedback in Share feedback to see the prediction here.")
+    elif prediction == 1:
+        st.success("The model predicts this passenger will be satisfied.")
+        st.caption("Based on the latest submitted flight details. This is a model estimate, not a guarantee.")
+    else:
+        st.warning("The model predicts this passenger will be neutral or dissatisfied.")
+        st.caption("Based on the latest submitted flight details. This is a model estimate, not a guarantee.")
     st.subheader("Selected classifier")
     st.write("**Random Forest Classifier** — the notebook’s top-ranked model by weighted F1-score, selected from its 10-model comparison.")
     st.code("RandomForestClassifier(n_estimators=200, min_samples_split=5, max_depth=None, random_state=42, n_jobs=1)", language="python")
     st.caption(f"Training rows: {artifacts['train_rows']:,} · Test rows: {artifacts['test_rows']:,} · Evaluation is recomputed using the notebook split and settings.")
     metric_cols=st.columns(5)
     for col,(label,value) in zip(metric_cols,artifacts["metrics"].items()): col.metric(label,f"{value:.4f}")
-    left,right=st.columns([1,1.2])
-    with left:
-        st.subheader("Confusion matrix")
-        fig=confusion_matrix_figure(artifacts["confusion_matrix"])
-        st.pyplot(fig); plt.close(fig)
-    with right:
-        st.subheader("Notebook evaluation graphic")
-        st.write("The notebook includes the selected model’s confusion matrix and a 10-model ROC curve. The matrix above is reconstructed from the same held-out evaluation; ROC-AUC is computed from the model’s supported positive-class probabilities.")
-        st.subheader("Top feature importances")
-        table=artifacts["feature_importance"].copy()
-        st.dataframe(table,hide_index=True,use_container_width=True)
-        st.caption("Importance values come from the fitted notebook-selected Random Forest. They describe model use, not causal effects.")
+    st.subheader("Top feature importances")
+    table=artifacts["feature_importance"].copy()
+    st.dataframe(table,hide_index=True,use_container_width=True)
+    st.caption("Importance values show which inputs the model relied on most; they do not establish cause and effect.")
     st.subheader("Notebook's 10-model comparison")
     st.caption("These rounded values are transcribed from the saved comparison output in notebook cell F1. The current-runtime Random Forest metrics above are recomputed from the notebook code; saved notebook outputs can differ slightly across library versions.")
     comparison_path=__import__("pathlib").Path(__file__).with_name("notebook_model_comparison.csv")
