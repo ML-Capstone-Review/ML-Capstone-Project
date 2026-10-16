@@ -56,9 +56,11 @@ def render_feedback(data, model, bounds, numeric, categorical):
     def reset_values():
         for col, value in defaults.items(): st.session_state[f"field_{col}"]=value
         st.session_state.pop("feedback_done", None)
+        st.session_state["passenger_name"] = ""
     st.button("↺ Reset to example values", on_click=reset_values, help="Restore the editable example values.")
 
     with st.form("passenger_feedback", clear_on_submit=False):
+        passenger_name = st.text_input("Passenger name", placeholder="Enter your name", key="passenger_name")
         st.markdown('<div class="section-card"><h3>About your trip</h3></div>', unsafe_allow_html=True)
         a,b,c = st.columns(3)
         with a: values={"Gender": st.selectbox(LABELS["Gender"], sorted(data["Gender"].dropna().unique().tolist()), key="field_Gender")}
@@ -80,14 +82,21 @@ def render_feedback(data, model, bounds, numeric, categorical):
                 with box: values[col]=_rating_widget(col,defaults[col])
         submitted=st.form_submit_button("Submit feedback", type="primary", use_container_width=True)
     if submitted:
+        passenger_name = passenger_name.strip()
         errors=validate_feedback(values,data)
-        if errors:
+        if not passenger_name:
+            st.error("Please enter your name before submitting.")
+        elif errors:
             for message in errors: st.error(message)
         else:
             try:
                 _internal_result=predict_feedback(model,values,bounds,numeric,categorical)
                 st.session_state["feedback_done"]=True
-                st.session_state["latest_prediction"] = _internal_result
+                submissions = st.session_state.setdefault("passenger_submissions", {})
+                submissions[passenger_name.casefold()] = {
+                    "name": passenger_name,
+                    "prediction": _internal_result,
+                }
             except Exception as exc:
                 st.error(f"We could not process this form. Please review your entries and try again. ({type(exc).__name__})")
     if st.session_state.get("feedback_done"):
@@ -99,15 +108,20 @@ def render_evaluator(artifacts):
     st.markdown('<div class="hero"><div class="eyebrow">Project evaluator view</div><h1>Model evaluation</h1><p>Held-out results from the classification notebook workflow.</p></div>', unsafe_allow_html=True)
     st.info("Metrics below are computed on the notebook’s fixed 20% stratified test split.")
     st.subheader("Passenger prediction")
-    prediction = st.session_state.get("latest_prediction")
-    if prediction is None:
-        st.caption("Submit a passenger's feedback in Share feedback to see the prediction here.")
-    elif prediction == 1:
-        st.success("The model predicts this passenger will be satisfied.")
-        st.caption("Based on the latest submitted flight details. This is a model estimate, not a guarantee.")
+    submissions = st.session_state.get("passenger_submissions", {})
+    if not submissions:
+        st.caption("Submit passenger feedback with a name to see its prediction here.")
     else:
-        st.warning("The model predicts this passenger will be neutral or dissatisfied.")
-        st.caption("Based on the latest submitted flight details. This is a model estimate, not a guarantee.")
+        selected_key = st.selectbox(
+            "Select passenger",
+            options=sorted(submissions),
+            format_func=lambda key: submissions[key]["name"],
+        )
+        prediction = submissions[selected_key]["prediction"]
+        if prediction == 1:
+            st.success(f"{submissions[selected_key]['name']}: predicted satisfied.")
+        else:
+            st.warning(f"{submissions[selected_key]['name']}: predicted neutral or dissatisfied.")
     st.subheader("Selected classifier")
     st.write("**Random Forest Classifier** — the notebook’s top-ranked model by weighted F1-score, selected from its 10-model comparison.")
     st.code("RandomForestClassifier(n_estimators=200, min_samples_split=5, max_depth=None, random_state=42, n_jobs=1)", language="python")
