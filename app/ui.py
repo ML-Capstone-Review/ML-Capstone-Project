@@ -31,8 +31,9 @@ def apply_theme():
 
 
 def _rating_widget(column, default):
-    return st.slider(LABELS[column], min_value=0, max_value=5, value=int(default), step=1,
-                     help="Service ratings in the project dataset use a 0–5 scale.", key=f"field_{column}")
+    return st.slider(LABELS[column], min_value=1, max_value=5, value=max(1, int(default)), step=1,
+                     help="Use the passenger rating scale from 1 (lowest) to 5 (highest).",
+                     key=f"field_{column}_rating_v2")
 
 
 def render_feedback(data, model, bounds, numeric, categorical):
@@ -50,11 +51,14 @@ def render_feedback(data, model, bounds, numeric, categorical):
         key=f"field_{col}"
         if key not in st.session_state: st.session_state[key]=defaults[col]
     for col in NUMERIC_COLUMNS:
-        key=f"field_{col}"
-        if key not in st.session_state: st.session_state[key]=defaults[col]
+        key=f"field_{col}_rating_v2" if col in RATING_COLUMNS else f"field_{col}"
+        value=max(1, defaults[col]) if col in RATING_COLUMNS else defaults[col]
+        if key not in st.session_state: st.session_state[key]=value
 
     def reset_values():
-        for col, value in defaults.items(): st.session_state[f"field_{col}"]=value
+        for col, value in defaults.items():
+            key=f"field_{col}_rating_v2" if col in RATING_COLUMNS else f"field_{col}"
+            st.session_state[key]=max(1, value) if col in RATING_COLUMNS else value
         st.session_state.pop("feedback_done", None)
         st.session_state["passenger_name"] = ""
     st.button("↺ Reset to example values", on_click=reset_values, help="Restore the editable example values.")
@@ -75,7 +79,7 @@ def render_feedback(data, model, bounds, numeric, categorical):
         for i,col in enumerate(["Departure Delay","Arrival Delay"]):
             with (a if i==0 else b):
                 values[col]=st.number_input(LABELS[col], min_value=int(data[col].min()), max_value=int(data[col].max()), step=1, key=f"field_{col}")
-        st.markdown('<div class="section-card"><h3>Onboard experience</h3><p class="note">Rate each area from 0 (lowest) to 5 (highest), following the project dataset scale.</p></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-card"><h3>Onboard experience</h3><p class="note">Rate each area from 1 (lowest) to 5 (highest). The source dataset’s 0 values behave as a special code, not as a low rating.</p></div>', unsafe_allow_html=True)
         for start in range(0,len(RATING_COLUMNS),3):
             cols=st.columns(3)
             for box,col in zip(cols,RATING_COLUMNS[start:start+3]):
@@ -83,6 +87,7 @@ def render_feedback(data, model, bounds, numeric, categorical):
         submitted=st.form_submit_button("Submit feedback", type="primary", use_container_width=True)
     if submitted:
         passenger_name = passenger_name.strip()
+        st.session_state["feedback_done"] = False
         errors=validate_feedback(values,data)
         if not passenger_name:
             st.error("Please enter your name before submitting.")
@@ -92,15 +97,17 @@ def render_feedback(data, model, bounds, numeric, categorical):
             try:
                 _internal_result=predict_feedback(model,values,bounds,numeric,categorical)
                 st.session_state["feedback_done"]=True
+                st.session_state["last_submitted_name"] = passenger_name
                 submissions = st.session_state.setdefault("passenger_submissions", {})
                 submissions[passenger_name.casefold()] = {
                     "name": passenger_name,
                     "prediction": _internal_result,
                 }
+                st.session_state["selected_passenger"] = passenger_name.casefold()
             except Exception as exc:
                 st.error(f"We could not process this form. Please review your entries and try again. ({type(exc).__name__})")
     if st.session_state.get("feedback_done"):
-        st.success("Thank you for sharing your journey with us. Your feedback has been reviewed for this demo.")
+        st.success(f"Thank you, {st.session_state['last_submitted_name']}, for sharing your journey with us. Your feedback has been reviewed for this demo.")
         st.caption("Your response was processed for this demo only. It was not saved to a database or sent to an airline.")
 
 
@@ -116,6 +123,7 @@ def render_evaluator(artifacts):
             "Select passenger",
             options=sorted(submissions),
             format_func=lambda key: submissions[key]["name"],
+            key="selected_passenger",
         )
         prediction = submissions[selected_key]["prediction"]
         if prediction == 1:
